@@ -1,7 +1,6 @@
 out/
-app/
 dist/
-icon/
-sources.txt
-Plupot.jar
 *.jar
+manifest.txt
+Plupot-*-macos*.zip
+Plupot-*-arm64.zip

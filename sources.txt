@@ -1,0 +1,17 @@
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\Main.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\build\IconBuilder.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\build\ResetSave.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\core\GameContext.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\core\GamePanel.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\core\GameWindow.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\core\Screen.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\data\SaveData.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\game\OverlayPanel.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\game\OverlayWindow.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\share\ShareCard.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\ui\AppIcon.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\ui\Draw.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\ui\FlashEffect.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\ui\Fonts.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\ui\MenuScreen.java
+D:\JavaProjects\Plupot\Plupot\src\com\plupot\ui\Palette.java

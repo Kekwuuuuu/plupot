@@ -21,10 +21,22 @@ import java.awt.image.BufferedImage;
  * per-pixel transparent — the user's desktop shows through, except where
  * OverlayPanel paints the C1 road.
  *
- * Not exclusive fullscreen (that mode cannot be transparent); we instead
- * size an undecorated window to the whole screen and pin it on top.
+ * <p>Not exclusive fullscreen (that mode cannot be transparent); we instead
+ * size an undecorated window to the whole screen and pin it on top.</p>
+ *
+ * <p>Per-pixel translucency is used on every platform that supports it,
+ * including macOS. The historical macOS tearing is handled inside
+ * {@link OverlayPanel} by rendering each frame offscreen and blitting it in a
+ * single operation, instead of disabling transparency.</p>
  */
 public final class OverlayWindow extends JFrame {
+
+    /**
+     * Emergency escape hatch. Set to {@code true} to disable per-pixel
+     * translucency everywhere and fall back to a solid C1 window (e.g. if a
+     * particular GPU/driver combo still misbehaves).
+     */
+    private static final boolean DISABLE_TRANSLUCENCY = false;
 
     public OverlayWindow(GameContext ctx) {
         super("Plupot");
@@ -33,16 +45,20 @@ public final class OverlayWindow extends JFrame {
         setResizable(false);
         setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
 
-        boolean perPixel = isPerPixelTranslucencySupported();
+        boolean supported = isPerPixelTranslucencySupported();
+        boolean perPixel = supported && !DISABLE_TRANSLUCENCY;
+
         if (perPixel) {
             // Must be set before the window is first shown for per-pixel
             // translucency to take effect.
             setBackground(new Color(0, 0, 0, 0));
         } else {
-            System.err.println(
-                    "[Plupot] Per-pixel translucency is not supported on this system. "
-                            + "The overlay will appear as a solid dark window.");
             setBackground(Palette.C1);
+            if (!supported) {
+                System.err.println(
+                        "[Plupot] Per-pixel translucency is not supported on this system. "
+                                + "The overlay will appear as a solid dark window.");
+            }
         }
 
         GraphicsDevice device = GraphicsEnvironment
@@ -56,6 +72,18 @@ public final class OverlayWindow extends JFrame {
         OverlayPanel panel = new OverlayPanel(ctx, perPixel);
         setContentPane(panel);
 
+        if (perPixel) {
+            // The panel owns its own offscreen frame and publishes exactly one
+            // blit per repaint, so Swing's second full-canvas copy is pure
+            // overhead — and one more chance for the compositor to catch a
+            // half-written surface.
+            panel.setDoubleBuffered(false);
+        }
+
+        // No Swing container should claim the background; the panel paints
+        // every pixel it wants, and everything else stays transparent.
+        getRootPane().setOpaque(false);
+
         // No cursor while the overlay is up — this is the game.
         setCursor(invisibleCursor());
 
@@ -67,7 +95,7 @@ public final class OverlayWindow extends JFrame {
 
             @Override
             public void windowClosing(WindowEvent e) {
-                // Alt+F4 should *close the overlay*, not kill the app.
+                // Alt+F4 / Cmd+Q should *close the overlay*, not kill the app.
                 ctx.closeOverlay();
             }
         });

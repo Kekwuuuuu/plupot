@@ -2,42 +2,113 @@ name: Build macOS
 
 on:
   push:
-    branches: [ main ]
+    tags:
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version without leading v (e.g. 1.1.0)'
+        required: true
+        default: '1.1.0'
+
+permissions:
+  contents: write
 
 jobs:
-  macos-arm64:
+  build-macos:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-      - name: Build
+
+      - name: Resolve version
+        id: ver
         run: |
-          chmod +x build.sh
-          ./build.sh --dmg
-      - uses: actions/upload-artifact@v4
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ github.event.inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          V="${V:-1.1.0}"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Building version: $V"
+
+      - name: Compile
+        run: |
+          rm -rf out && mkdir -p out
+          javac -d out -encoding UTF-8 --release 17 $(find src -name '*.java')
+
+      - name: Copy resources into classpath
+        run: |
+          if [ -d src/com/plupot/res ]; then
+            mkdir -p out/com/plupot/res
+            cp -R src/com/plupot/res/. out/com/plupot/res/
+          fi
+
+      - name: Build jar
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          cat > manifest.txt <<EOF
+          Main-Class: com.plupot.Main
+          Implementation-Title: Plupot
+          Implementation-Version: ${VERSION}
+          EOF
+          jar cfm "Plupot-${VERSION}.jar" manifest.txt -C out .
+          mkdir -p dist/input
+          cp "Plupot-${VERSION}.jar" dist/input/
+
+      - name: Package .app with jpackage
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          ICON_ARG=""
+          if [ -f icon/icon.icns ]; then
+            ICON_ARG="--icon icon/icon.icns"
+          else
+            echo "::warning:: icon/icon.icns not found - app will use the default Java icon."
+          fi
+          jpackage \
+            --type app-image \
+            --name Plupot \
+            --app-version "$VERSION" \
+            --input dist/input \
+            --main-jar "Plupot-${VERSION}.jar" \
+            --main-class com.plupot.Main \
+            $ICON_ARG \
+            --mac-package-identifier com.plupot \
+            --mac-package-name Plupot \
+            --add-modules java.desktop \
+            --java-options "-Xmx512m" \
+            --dest dist/macos
+
+      - name: Ad-hoc codesign
+        run: |
+          codesign --force --deep --sign - dist/macos/Plupot.app
+          codesign --verify --deep --strict --verbose=2 dist/macos/Plupot.app
+
+      - name: Zip bundle
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          ditto -c -k --keepParent dist/macos/Plupot.app "Plupot-${VERSION}-arm64.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: Plupot-macos-arm64
-          path: dist/*.dmg
+          name: Plupot-${{ steps.ver.outputs.version }}-macos-arm64
+          path: Plupot-${{ steps.ver.outputs.version }}-arm64.zip
           if-no-files-found: error
 
-  macos-x86_64:
-    runs-on: macos-15-intel
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
         with:
-          distribution: temurin
-          java-version: '21'
-      - name: Build
-        run: |
-          chmod +x build.sh
-          ./build.sh --dmg
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Plupot-macos-x86_64
-          path: dist/*.dmg
-          if-no-files-found: error
+          files: Plupot-${{ steps.ver.outputs.version }}-arm64.zip
+          generate_release_notes: true

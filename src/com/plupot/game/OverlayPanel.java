@@ -10,13 +10,16 @@ import javax.swing.JPanel;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.GraphicsConfiguration;
 import java.awt.RenderingHints;
+import java.awt.Transparency;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
 import java.awt.event.FocusAdapter;
@@ -26,6 +29,7 @@ import java.awt.event.WindowEvent;
 import java.awt.event.WindowFocusListener;
 import java.awt.geom.Arc2D;
 import java.awt.geom.Ellipse2D;
+import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -38,6 +42,16 @@ import java.util.concurrent.ThreadLocalRandom;
  * The gameplay surface. Everything is transparent except the C1 road on the
  * right side of the screen. The road is split into {@link #NUM_ALLEYS} columns;
  * obstacles fall down one alley at a time.
+ *
+ * <p><b>Rendering (macOS translucency note).</b> A {@code BufferStrategy} cannot
+ * composite into a per-pixel-translucent window — its buffers carry no alpha,
+ * so nothing ever reaches the screen. This class therefore paints through
+ * Swing's normal {@code paintComponent} path, which <em>does</em> write into the
+ * window's alpha surface. To keep the macOS compositor from tearing the
+ * always-on-top translucent surface, every frame is first rendered into an
+ * offscreen ARGB image and then blitted to the window in a <em>single</em>
+ * {@code AlphaComposite.Src} draw — one atomic pixel write per frame instead of
+ * dozens of drawing operations interleaved with the compositor.</p>
  *
  * <p>Gameplay: one fixed-size leader circle surrounds itself with
  * {@code pot - 1} followers packed into a fixed 30-cell hexagonal lattice.
@@ -149,6 +163,9 @@ public final class OverlayPanel extends JPanel {
 
     private final float[] slotAlpha = new float[SLOT_COUNT];
     private final long[] slotCount = new long[SLOT_COUNT];
+
+    /** Offscreen frame; every repaint is rendered here and blitted in one go. */
+    private BufferedImage offscreen;
 
     /** How many bars this cycle spawns before a fight triggers. Re-rolled after every fight. */
     private int barsPerCycle = MIN_BARS_PER_CYCLE;
@@ -909,38 +926,76 @@ public final class OverlayPanel extends JPanel {
 
     // ------------------------------------------------------------------ paint
 
+    /**
+     * Renders one frame into {@link #offscreen}, then writes it to the window
+     * surface in a single {@code Src} blit. One atomic write per frame is what
+     * stops the macOS compositor from tearing the translucent surface; drawing
+     * many primitives straight onto the window surface is what used to strobe.
+     */
     @Override
-    protected void paintComponent(Graphics g) {
+    protected void paintComponent(Graphics graphics) {
         int w = getWidth();
         int h = getHeight();
-
-        Graphics2D g2 = (Graphics2D) g.create();
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
-
-        if (translucent) {
-            g2.setComposite(AlphaComposite.Clear);
-            g2.fillRect(0, 0, w, h);
-            g2.setComposite(AlphaComposite.SrcOver);
-        } else {
-            g2.setColor(Palette.C1);
-            g2.fillRect(0, 0, w, h);
+        if (w <= 0 || h <= 0) {
+            return;
         }
 
-        BarBounds b = barBounds(w, h);
+        BufferedImage frame = offscreenFrame(w, h);
 
-        g2.setColor(Palette.C1);
-        g2.fillRect(Math.round(b.left()), 0, Math.round(b.barWidth()), h);
+        Graphics2D fg = frame.createGraphics();
+        try {
+            fg.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                    RenderingHints.VALUE_ANTIALIAS_ON);
+            fg.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
+                    RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            fg.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL,
+                    RenderingHints.VALUE_STROKE_PURE);
 
-        drawObstacles(g2, b);
-        drawEnemyFormation(g2, b);
-        drawPlayer(g2, b);
-        drawScore(g2, b, h);
-        drawDebug(g2, w, h);
-        drawEscIndicator(g2, w, h);
+            // Start from a fully transparent frame; the C1 road is drawn after.
+            fg.setComposite(AlphaComposite.Clear);
+            fg.fillRect(0, 0, w, h);
+            fg.setComposite(AlphaComposite.SrcOver);
 
-        g2.dispose();
+            BarBounds b = barBounds(w, h);
+
+            fg.setColor(Palette.C1);
+            fg.fillRect(Math.round(b.left()), 0, Math.round(b.barWidth()), h);
+
+            drawObstacles(fg, b);
+            drawEnemyFormation(fg, b);
+            drawPlayer(fg, b);
+            drawScore(fg, b, h);
+            drawDebug(fg, w, h);
+            drawEscIndicator(fg, w, h);
+        } finally {
+            fg.dispose();
+        }
+
+        Graphics2D g = (Graphics2D) graphics.create();
+        try {
+            // Src (not SrcOver): the frame's alpha fully replaces the surface,
+            // so old pixels cannot linger between frames.
+            g.setComposite(AlphaComposite.Src);
+            g.drawImage(frame, 0, 0, null);
+        } finally {
+            g.dispose();
+        }
+    }
+
+    private BufferedImage offscreenFrame(int w, int h) {
+        if (offscreen != null && offscreen.getWidth() == w && offscreen.getHeight() == h) {
+            return offscreen;
+        }
+        GraphicsConfiguration gc = getGraphicsConfiguration();
+        BufferedImage img = null;
+        if (gc != null) {
+            img = gc.createCompatibleImage(w, h, Transparency.TRANSLUCENT);
+        }
+        if (img == null) {
+            img = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        }
+        offscreen = img;
+        return offscreen;
     }
 
     private void drawObstacles(Graphics2D g2, BarBounds b) {

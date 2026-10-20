@@ -11,6 +11,13 @@ PKG_ID="com.plupot"
 WANT_DMG=0
 [[ "${1:-}" == "--dmg" ]] && WANT_DMG=1
 
+# ------------------------------------------------------------------ runtime opts
+# Extra JVM options baked into the bundle's launcher.
+#   Leave empty for the platform default pipeline.
+#   If the transparent overlay tears on macOS, the first thing to try is:
+#     RUNTIME_JAVA_OPTS='-Dsun.java2d.metal=false' ./build.sh --dmg
+RUNTIME_JAVA_OPTS="${RUNTIME_JAVA_OPTS:-}"
+
 # ------------------------------------------------------------------ find JDK 17+
 find_jdk() {
   if [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/javac" && -x "$JAVA_HOME/bin/jpackage" ]]; then
@@ -44,6 +51,7 @@ fi
 JDKBIN="$JDK_HOME/bin"
 echo "Using JDK: $JDK_HOME"
 echo "Arch:      $(uname -m)"
+echo "Java opts: ${RUNTIME_JAVA_OPTS:-<none>}"
 
 # ------------------------------------------------------------------ 1. master icon
 mkdir -p assets
@@ -91,6 +99,7 @@ cp Plupot.jar app/Plupot.jar
   --icon icon/icon.icns \
   --mac-package-identifier "$PKG_ID" \
   --mac-package-name "$APP_NAME" \
+  ${RUNTIME_JAVA_OPTS:+--java-options "$RUNTIME_JAVA_OPTS"} \
   --dest dist
 
 # Ad-hoc sign so Gatekeeper is less cranky on the local machine.
@@ -112,6 +121,7 @@ if [[ "$WANT_DMG" == "1" ]]; then
     --icon icon/icon.icns \
     --mac-package-identifier "$PKG_ID" \
     --mac-package-name "$APP_NAME" \
+    ${RUNTIME_JAVA_OPTS:+--java-options "$RUNTIME_JAVA_OPTS"} \
     --dest dist
   echo "Built: $(ls dist/*.dmg | head -n1)"
 fi
