@@ -43,7 +43,8 @@ jobs:
 
       - name: Compile
         run: |
-          mkdir -p out dist
+          rm -rf out dist
+          mkdir -p out dist/jar dist/appimage dist/dmg
           find src -name '*.java' > sources.txt
           javac -encoding UTF-8 -d out @sources.txt
           rm sources.txt
@@ -55,7 +56,8 @@ jobs:
 
       - name: Build jar
         run: |
-          jar --create --file dist/plupot.jar --main-class "$MAIN_CLASS" -C out .
+          jar --create --file dist/jar/plupot.jar --main-class "$MAIN_CLASS" -C out .
+          ls -lh dist/jar/plupot.jar
 
       - name: Package .app with jpackage
         run: |
@@ -65,12 +67,13 @@ jobs:
             --type app-image \
             --name "$APP_NAME" \
             --app-version "$VERSION" \
-            --input dist \
+            --input dist/jar \
             --main-jar plupot.jar \
             --main-class "$MAIN_CLASS" \
             --mac-package-name "$APP_NAME" \
             --dest dist/appimage \
             $ICON_ARG
+          ls -R dist/appimage | head -40
 
       - name: Ad-hoc codesign
         run: |
@@ -79,7 +82,6 @@ jobs:
 
       - name: Build DMG
         run: |
-          mkdir -p dist/dmg
           cp -R "dist/appimage/$APP_NAME.app" dist/dmg/
           ln -s /Applications dist/dmg/Applications
           hdiutil create -volname "$APP_NAME $VERSION" -srcfolder dist/dmg \
@@ -89,5 +91,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APP_NAME }}-${{ env.VERSION }}-macos-${{ matrix.arch }}
-          path: dist/*.dmg
+          path: dist/${{ env.APP_NAME }}-${{ env.VERSION }}-macos-${{ matrix.arch }}.dmg
           if-no-files-found: error
