@@ -1,1 +1,93 @@
-﻿< paste the YAML above here >
+name: Build macOS
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'App version (e.g. 1.1.0)'
+        required: false
+        default: '1.1.0'
+
+permissions:
+  contents: read
+
+env:
+  APP_NAME: Plupot
+  MAIN_CLASS: com.plupot.Main
+
+jobs:
+  build-macos:
+    name: build-macos (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ inputs.version || '1.1.0' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Compile
+        run: |
+          mkdir -p out dist
+          find src -name '*.java' > sources.txt
+          javac -encoding UTF-8 -d out @sources.txt
+          rm sources.txt
+
+      - name: Copy resources into classpath
+        run: |
+          mkdir -p out/com/plupot
+          cp -R src/com/plupot/res out/com/plupot/
+
+      - name: Build jar
+        run: |
+          jar --create --file dist/plupot.jar --main-class "$MAIN_CLASS" -C out .
+
+      - name: Package .app with jpackage
+        run: |
+          ICON_ARG=""
+          if [ -f icon/icon.icns ]; then ICON_ARG="--icon icon/icon.icns"; fi
+          jpackage \
+            --type app-image \
+            --name "$APP_NAME" \
+            --app-version "$VERSION" \
+            --input dist \
+            --main-jar plupot.jar \
+            --main-class "$MAIN_CLASS" \
+            --mac-package-name "$APP_NAME" \
+            --dest dist/appimage \
+            $ICON_ARG
+
+      - name: Ad-hoc codesign
+        run: |
+          codesign --force --deep --sign - "dist/appimage/$APP_NAME.app"
+          codesign --verify --depth=1 --verbose=2 "dist/appimage/$APP_NAME.app" || true
+
+      - name: Build DMG
+        run: |
+          mkdir -p dist/dmg
+          cp -R "dist/appimage/$APP_NAME.app" dist/dmg/
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname "$APP_NAME $VERSION" -srcfolder dist/dmg \
+            -ov -format UDZO "dist/$APP_NAME-$VERSION-macos-${{ matrix.arch }}.dmg"
+          ls -lh dist/*.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.VERSION }}-macos-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
