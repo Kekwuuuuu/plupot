@@ -25,7 +25,7 @@ jobs:
           if-no-files-found: error
 
   macos-x86_64:
-    runs-on: macos-13
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
