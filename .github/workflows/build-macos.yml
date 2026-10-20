@@ -44,7 +44,7 @@ jobs:
       - name: Compile
         run: |
           rm -rf out dist
-          mkdir -p out dist/jar dist/appimage dist/dmg
+          mkdir -p out dist/jar dist/appimage
           find src -name '*.java' > sources.txt
           javac -encoding UTF-8 -d out @sources.txt
           rm sources.txt
@@ -82,11 +82,58 @@ jobs:
 
       - name: Build DMG
         run: |
-          cp -R "dist/appimage/$APP_NAME.app" dist/dmg/
-          ln -s /Applications dist/dmg/Applications
-          hdiutil create -volname "$APP_NAME $VERSION" -srcfolder dist/dmg \
-            -ov -format UDZO "dist/$APP_NAME-$VERSION-macos-${{ matrix.arch }}.dmg"
-          ls -lh dist/*.dmg
+          set -euo pipefail
+          APP="dist/appimage/$APP_NAME.app"
+          STAGE="dist/dmg"
+          DMG="dist/$APP_NAME-$VERSION-macos-${{ matrix.arch }}.dmg"
+          TMPIMG="dist/tmp.dmg"
+          MP="${RUNNER_TEMP:-/tmp}/plupot_dmg"
+
+          echo "Sweeping stale Plupot mounts..."
+          for dev in $(hdiutil info | awk '/\/Volumes\/Plupot/ {print $1}'); do
+            echo "  detaching $dev"
+            hdiutil detach "$dev" -force 2>/dev/null || true
+          done
+
+          rm -rf "$STAGE" "$MP" "$TMPIMG" "$DMG"
+          mkdir -p "$STAGE" "$MP"
+          cp -R "$APP" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          rm -rf dist/jar
+
+          ok=0
+          for i in 1 2 3; do
+            echo "=== attempt $i ==="
+            hdiutil detach "$MP" -force 2>/dev/null || true
+            rm -f "$TMPIMG" "$DMG"
+
+            if hdiutil create -size 500m -fs HFS+ -volname "$APP_NAME $VERSION" \
+                 -type UDIF -ov "$TMPIMG" \
+               && hdiutil attach "$TMPIMG" -nobrowse -mountpoint "$MP" \
+               && cp -R "$STAGE/." "$MP/" \
+               && sync \
+               && hdiutil detach "$MP" -force \
+               && hdiutil convert "$TMPIMG" -format UDZO -o "$DMG"; then
+              ok=1
+              break
+            fi
+
+            echo "attempt $i failed, cleaning up"
+            hdiutil detach "$MP" -force 2>/dev/null || true
+            rm -f "$TMPIMG" "$DMG"
+            sleep 15
+          done
+
+          if [ "$ok" != "1" ]; then
+            echo "DMG build failed after 3 attempts"
+            hdiutil info || true
+            df -h || true
+            exit 1
+          fi
+
+          hdiutil verify "$DMG"
+          ls -lh "$DMG"
+          rm -f "$TMPIMG"
 
       - uses: actions/upload-artifact@v4
         with:
