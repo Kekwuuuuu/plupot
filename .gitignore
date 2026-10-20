@@ -1,0 +1,7 @@
+out/
+app/
+dist/
+icon/
+sources.txt
+Plupot.jar
+*.jar

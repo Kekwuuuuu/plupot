@@ -1,0 +1,43 @@
+name: Build macOS
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  macos-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Build
+        run: |
+          chmod +x build.sh
+          ./build.sh --dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Plupot-macos-arm64
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  macos-x86_64:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Build
+        run: |
+          chmod +x build.sh
+          ./build.sh --dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Plupot-macos-x86_64
+          path: dist/*.dmg
+          if-no-files-found: error
